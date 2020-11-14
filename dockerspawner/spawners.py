@@ -11,7 +11,7 @@ from async_generator import async_generator, yield_
 from textwrap import dedent
 from concurrent.futures import ThreadPoolExecutor
 from pprint import pformat
-from docker.errors import APIError
+from docker.errors import APIError, NotFound
 from docker.tls import TLSConfig
 from docker.types import (
     TaskTemplate,
@@ -79,82 +79,23 @@ class SwarmSpawner(Spawner):
     )
 
     option_template = Unicode(
-        """<option value="{image}">{name}</option>""",
+        """<option value="{image}" {selected}>{name}</option>""",
         config=True,
         help="Template for html form options.",
     )
 
-    disabled_form = Unicode()
-
     @default("options_form")
     def _options_form(self):
-        """Return the form with the drop-down menu."""
-        # User options not enabled -> return default jupyterhub form
-        if not self.use_user_options:
-            return self.disabled_form
-
-        # Support the use of dynamic string replacement
-        if hasattr(self.user, "mount"):
-            for di in self.dockerimages:
-                if "{replace_me}" in di["name"]:
-                    di["name"] = di["name"].replace(
-                        "{replace_me}", self.user.mount["HOST"]
-                    )
-        options = "".join(
-            [
-                self.option_template.format(image=di["image"], name=di["name"])
-                for di in self.dockerimages
-            ]
-        )
-        return self.form_template.format(option_template=options)
+        # TODO: return option html form
+        return ""
 
     def options_from_form(self, form_data):
         """Parse the submitted form data and turn it into the correct
         structures for self.user_options."""
-        # user options not enabled, just return input
-        if not self.use_user_options:
-            return form_data
-
-        i_default = self.dockerimages[0]
-        # formdata looks like {'dockerimage': ['jupyterhub/singleuser']}"""
-        image = form_data.get("dockerimage", [i_default])[0]
-        # Don't allow users to input their own images
-        if image not in [image["image"] for image in self.dockerimages]:
-            image = i_default
-        options = {"user_selected_image": image}
+        # TODO: select options from specs, this will be stored in self.user_options
         return options
 
-    _executor = None
-
-    @property
-    def executor(self, max_workers=1):
-        """Single global executor"""
-        cls = self.__class__
-        if cls._executor is None:
-            cls._executor = ThreadPoolExecutor(max_workers)
-        return cls._executor
-
-    _client = None
-
-    @property
-    def client(self):
-        """Single global client instance"""
-        cls = self.__class__
-
-        if cls._client is None:
-            kwargs = {}
-            if self.tls_config:
-                kwargs["tls"] = TLSConfig(**self.tls_config)
-            kwargs.update(kwargs_from_env())
-            client = docker.APIClient(version="auto", **kwargs)
-
-            cls._client = client
-        return cls._client
-
-    service_id = Unicode()
-    service_port = Int(8888, min=1, max=65535, config=True)
-    service_image = Unicode("jupyterhub/singleuser", config=True)
-    service_prefix = Unicode(
+    service_name_prefix = Unicode(
         "jupyter",
         config=True,
         help=dedent(
@@ -164,7 +105,8 @@ class SwarmSpawner(Spawner):
             """
         ),
     )
-    tls_config = Dict(
+
+    docker_client_tls_config = Dict(
         config=True,
         help=dedent(
             """Arguments to pass to docker TLS configuration.
@@ -174,60 +116,9 @@ class SwarmSpawner(Spawner):
         ),
     )
 
-    container_spec = Dict({}, config=True, help="Params to create the service")
+    service_id = Unicode()
 
-    log_driver = Dict(
-        {},
-        config=True,
-        help=dedent("""Which logging driver should be used for each service"""),
-    )
-
-    resource_spec = Dict({}, config=True, help="Params about CPU and memory limits")
-
-    placement = Dict(
-        {},
-        config=True,
-        help=dedent("""List of placement constraints for all images"""),
-    )
-
-    networks = List(
-        [],
-        config=True,
-        help=dedent(
-            """Networks configuration for all images"""
-        ),
-    )
-
-    configs = List(
-        trait=Dict(), config=True, help=dedent("""Configs to attach to the service""")
-    )
-
-    use_user_options = Bool(
-        False,
-        config=True,
-        help=dedent(
-            """
-            The spawner will use the dict passed through the form
-            or as JSON body when using the Hub API
-            """
-        ),
-    )
-
-    jupyterhub_service_name = Unicode(
-        config=True,
-        help=dedent(
-            """Name of the service running the JupyterHub"""
-        ),
-    )
-
-    @property
-    def tls_client(self):
-        """A tuple consisting of the TLS client certificate and key if they
-        have been provided, otherwise None.
-        """
-        if self.tls_cert and self.tls_key:
-            return (self.tls_cert, self.tls_key)
-        return None
+    service_port = Int(8888, min=1, max=65535, config=True)
 
     _service_owner = None
 
@@ -251,16 +142,11 @@ class SwarmSpawner(Spawner):
     def service_name(self):
         """
         Service name inside the Docker Swarm
-
-        service_suffix should be a numerical value unique for user
-        {service_prefix}-{service_owner}-{service_suffix}
         """
-        if hasattr(self, "server_name") and self.server_name:
-            server_name = self.server_name
+        if self.name:
+            return "{}-{}-{}".format(self.service_name_prefix, self.service_owner, server_name)
         else:
-            server_name = 1
-
-        return "{}-{}-{}".format(self.service_prefix, self.service_owner, server_name)
+            return "{}-{}".format(self.service_name_prefix, self.service_owner)
 
     @property
     def tasks(self):
@@ -269,6 +155,33 @@ class SwarmSpawner(Spawner):
     @tasks.setter
     def tasks(self, tasks):
         self._tasks = tasks
+
+    _executor = None
+
+    @property
+    def executor(self, max_workers=1):
+        """Single global executor"""
+        cls = self.__class__
+        if cls._executor is None:
+            cls._executor = ThreadPoolExecutor(max_workers)
+        return cls._executor
+
+    _client = None
+
+    @property
+    def client(self):
+        """Single global client instance"""
+        cls = self.__class__
+
+        if cls._client is None:
+            kwargs = {}
+            if self.docker_client_tls_config:
+                kwargs["tls"] = TLSConfig(**self.docker_client_tls_config)
+            kwargs.update(kwargs_from_env())
+            client = docker.APIClient(version="auto", **kwargs)
+
+            cls._client = client
+        return cls._client
 
     def load_state(self, state):
         super().load_state(state)
@@ -284,12 +197,6 @@ class SwarmSpawner(Spawner):
         super().clear_state()
         self.service_id = ""
 
-    @staticmethod
-    def _env_keep_default():
-        """it's called in traitlets. It's a special method name.
-        Don't inherit any env from the parent process"""
-        return []
-
     def _public_hub_api_url(self):
         proto, path = self.hub.api_url.split("://", 1)
         _, rest = path.split(":", 1)
@@ -299,22 +206,15 @@ class SwarmSpawner(Spawner):
 
     def get_env(self):
         env = super().get_env()
-        env.update(
-            dict(
-                JPY_USER=self.user.name,
-                JPY_COOKIE_NAME=self.user.server.cookie_name,
-                JPY_BASE_URL=self.user.server.base_url,
-                JPY_HUB_PREFIX=self.hub.server.base_url,
-            )
-        )
-        env["JPY_HUB_API_URL"] = self._public_hub_api_url()
         return env
 
     def _docker(self, method, *args, **kwargs):
         """
         Wrapper for calling docker methods to be passed to ThreadPoolExecutor
         """
-        m = getattr(self.client, method)
+        m = self.client
+        for attr in method.split('.')
+            m = getattr(m, attr)
         return m(*args, **kwargs)
 
     def docker(self, method, *args, **kwargs):
@@ -331,15 +231,15 @@ class SwarmSpawner(Spawner):
             )
         )
         try:
-            service = yield self.docker("inspect_service", self.service_name)
-            self.service_id = service["ID"]
-        except APIError as err:
-            if err.response.status_code == 404:
+            service = yield self.docker("services.get", self.service_name)
+            self.service_id = service.id
+        except NotFound:
                 self.log.info("Docker service '{}' is gone".format(self.service_name))
                 service = None
                 # Docker service is gone, remove service id
                 self.service_id = ""
-            elif err.response.status_code == 500:
+        except APIError as err:
+            if err.response.status_code == 500:
                 self.log.info("Docker Swarm Server error")
                 service = None
                 # Docker service is unhealthy, remove the service_id
@@ -349,6 +249,97 @@ class SwarmSpawner(Spawner):
         return service
 
     @gen.coroutine
+    def start(self):
+        """
+        Start the single-user server in a docker service.
+        You can specify the params for the service through
+        jupyterhub_config.py or using the user_options
+        """
+        self.log.info("User: {}, start spawn".format(self.user.__dict__))
+
+        # https://github.com/jupyterhub/jupyterhub/blob/master/jupyterhub/user.py#L202
+        # By default jupyterhub calls the spawner passing user_options
+        if self.use_user_options:
+            user_options = self.user_options
+        else:
+            user_options = {}
+
+        service = yield self.get_service()
+        if service is None:
+            # TODO: prepare configuration
+
+            # TODO: create service
+            service = None
+            self.service_id = service.id
+            self.log.info(
+                "Created Docker service {} (id: {}) from image {}"
+                " for user {}".format(
+                    self.service_name, self.service_id[:7], image, self.user
+                )
+            )
+
+            yield self.wait_for_running_tasks()
+
+        else:
+            self.log.info(
+                "Found existing Docker service {} (id: {})".format(
+                    self.service_name, self.service_id[:7]
+                )
+            )
+            # Handle re-using API token.
+            # Get the API token from the environment variables
+            # of the running service:
+            envs = service.attrs["Spec"]["TaskTemplate"]["ContainerSpec"]["Env"]
+            for line in envs:
+                if line.startswith("JPY_API_TOKEN="):
+                    self.api_token = line.split("=", 1)[1]
+                    break
+
+        ip = self.service_name
+        port = self.service_port
+        self.log.debug(
+            "Active service: '{}' with user '{}'".format(self.service_name, self.user)
+        )
+
+        # We use service_name instead of ip
+        # https://docs.docker.com/engine/swarm/networking/#use-swarm-mode-service-discovery
+        # service_port is actually equal to 8888
+        return ip, port
+
+    @gen.coroutine
+    def stop(self, now=False):
+        """
+        Stop and remove the service
+        Consider using stop/start when Docker adds support
+        """
+        self.log.info(
+            "Stopping and removing Docker service {} (id: {})".format(
+                self.service_name, self.service_id[:7]
+            )
+        )
+
+        service = yield self.get_service()
+        if not service:
+            self.log.warn("Docker service not found")
+            return
+
+        try:
+            service.remove()
+            # Even though it returns the service is gone
+            # the underlying containers are still being removed
+            self.log.info(
+                "Docker service {} (id: {}) removed".format(
+                    self.service_name, self.service_id[:7]
+                )
+            )
+        except APIError:
+            self.log.error("Error removing service {} (id: {})".format(
+                self.server_name, self.service_id
+            ))
+
+        self.clear_state()
+
+    @gen.coroutine
     def poll(self):
         """Check for a task state like `docker service ps id`"""
         service = yield self.get_service()
@@ -356,15 +347,12 @@ class SwarmSpawner(Spawner):
             self.log.warn("Docker service not found")
             return 0
 
-        task_filter = {"service": service["Spec"]["Name"]}
-        self.tasks = yield self.docker("tasks", task_filter)
-
         running_task = None
-        for task in self.tasks:
+        for task in service.tasks():
             task_state = task["Status"]["State"]
             if task_state == "running":
                 self.log.debug(
-                    "Task {} of Docker service {} status: {}".format(
+                    "Task {} of service with id {} status: {}".format(
                         task["ID"][:7], self.service_id[:7], pformat(task_state)
                     ),
                 )
@@ -373,8 +361,7 @@ class SwarmSpawner(Spawner):
             if task_state == "rejected":
                 task_err = task["Status"]["Err"]
                 self.log.error(
-                    "Task {} of Docker service {} status {} "
-                    "message {}".format(
+                    "Task {} of service with id {} status: {} message: {}".format(
                         task["ID"][:7],
                         self.service_id[:7],
                         pformat(task_state),
@@ -471,435 +458,12 @@ class SwarmSpawner(Spawner):
             self.log.info("Finished progress from spawning {}".format(image))
 
     @gen.coroutine
-    def removed_volume(self, name):
-        result = False
-        try:
-            yield self.docker("remove_volume", name=name)
-            self.log.info("Removed volume: {}".format(name))
-            result = True
-        except APIError as err:
-            if err.response.status_code == 409:
-                self.log.info("Can't remove volume: {} yet".format(name)),
-
-        return result
-
-    @gen.coroutine
-    def remove_volume(self, name, max_attempts=15):
-        attempt = 0
-        removed = False
-        # Volumes can only be removed after the service is gone
-        while not removed:
-            if attempt > max_attempts:
-                self.log.info("Failed to remove volume {}".format(name))
-                break
-            self.log.info("Removing volume {}".format(name))
-            removed = yield self.removed_volume(name=name)
-            yield gen.sleep(1)
-            attempt += 1
-
-        return removed
-
-    @gen.coroutine
-    def start(self):
-        """
-        Start the single-user server in a docker service.
-        You can specify the params for the service through
-        jupyterhub_config.py or using the user_options
-        """
-        self.log.info("User: {}, start spawn".format(self.user.__dict__))
-
-        # https://github.com/jupyterhub/jupyterhub/blob/master/jupyterhub/user.py#L202
-        # By default jupyterhub calls the spawner passing user_options
-        if self.use_user_options:
-            user_options = self.user_options
-        else:
-            user_options = {}
-
-        service = yield self.get_service()
-        if service is None:
-            # Validate state
-            if hasattr(self, "container_spec") and self.container_spec is not None:
-                container_spec = dict(**self.container_spec)
-            elif user_options == {}:
-                self.log.error(
-                    "User: {} is trying to create a service"
-                    " without a container_spec".format(self.user)
-                )
-                raise Exception(
-                    "That notebook is missing a specification"
-                    "to launch it, contact the admin to resolve "
-                    "this issue"
-                )
-
-            # Setup service
-            container_spec.update(user_options.get("container_spec", {}))
-
-            # Which image to spawn
-            if self.use_user_options and "user_selected_image" in user_options:
-                uimage = user_options["user_selected_image"]
-                image_info = None
-                for di in self.dockerimages:
-                    if di["image"] == uimage:
-                        image_info = copy.deepcopy(di)
-                if image_info is None:
-                    err_msg = "User selected image: {} couldn't be found".format(
-                        uimage["image"]
-                    )
-                    self.log.error(err_msg)
-                    raise Exception(err_msg)
-            else:
-                # Default image
-                image_info = self.dockerimages[0]
-
-            self.log.debug("Image info: {}".format(image_info))
-            self.log.debug("Container spec: {}".format(container_spec))
-
-            # Setup mounts
-            mounts = []
-            # Global mounts
-            if "mounts" in container_spec:
-                mounts.extend(container_spec["mounts"])
-            container_spec["mounts"] = []
-
-            # Image mounts
-            if "mounts" in image_info:
-                mounts.extend(image_info["mounts"])
-
-            for mount in mounts:
-                if isinstance(mount, dict):
-                    m = VolumeMounter(mount)
-                    m = yield m.create(owner=self.service_owner)
-                else:
-                    # Expects a mount_class that supports 'create'
-                    if hasattr(self.user, "data"):
-                        m = yield mount.create(self.user.data, owner=self.service_owner)
-                    else:
-                        m = yield mount.create(owner=self.service_owner)
-                container_spec["mounts"].append(m)
-
-            # Some envs are required by the single-user-image
-            if "env" in container_spec:
-                container_spec["env"].update(self.get_env())
-            else:
-                container_spec["env"] = self.get_env()
-
-            # Env of image
-            if "env" in image_info and isinstance(image_info["env"], dict):
-                container_spec["env"].update(image_info["env"])
-
-            # Dynamic update of env values
-            for env_key, env_value in container_spec["env"].items():
-                stripped_value = env_value.lstrip("{").rstrip("}")
-                if hasattr(self, stripped_value) and isinstance(
-                    getattr(self, stripped_value), str
-                ):
-                    container_spec["env"][env_key] = getattr(self, stripped_value)
-                if hasattr(self.user, stripped_value) and isinstance(
-                    getattr(self.user, stripped_value), str
-                ):
-                    container_spec["env"][env_key] = getattr(self.user, stripped_value)
-                if (
-                    hasattr(self.user, "data")
-                    and hasattr(self.user.data, stripped_value)
-                    and isinstance(getattr(self.user.data, stripped_value), str)
-                ):
-                    container_spec["env"][env_key] = getattr(
-                        self.user.data, stripped_value
-                    )
-
-            # Args of image
-            if "args" in image_info and isinstance(image_info["args"], list):
-                container_spec.update({"args": image_info["args"]})
-
-            if (
-                "command" in image_info
-                and isinstance(image_info["command"], list)
-                or "command" in image_info
-                and isinstance(image_info["command"], str)
-            ):
-                container_spec.update({"command": image_info["command"]})
-
-            # Log mounts config
-            self.log.debug(
-                "User: {} container_spec mounts: {}".format(
-                    self.user, container_spec["mounts"]
-                )
-            )
-
-            # Global resource_spec
-            resource_spec = {}
-            if hasattr(self, "resource_spec"):
-                resource_spec = self.resource_spec
-            resource_spec.update(user_options.get("resource_spec", {}))
-
-            networks = None
-            if hasattr(self, "networks"):
-                networks = self.networks
-            if user_options.get("networks") is not None:
-                networks = user_options.get("networks")
-
-            # Global Log driver
-            log_driver = None
-            if hasattr(self, "log_driver"):
-                log_driver = self.log_driver
-            if user_options.get("log_driver") is not None:
-                log_driver = user_options.get("log_driver")
-
-            # Global placement
-            placement = None
-            if hasattr(self, "placement"):
-                placement = self.placement
-            if user_options.get("placement") is not None:
-                placement = user_options.get("placement")
-
-            # Image to spawn
-            image = image_info["image"]
-
-            # Image resources
-            if "resource_spec" in image_info:
-                resource_spec = image_info["resource_spec"]
-
-            # Placement of image
-            if "placement" in image_info:
-                placement = image_info["placement"]
-
-            # Logdriver of image
-            if "log_driver" in image_info:
-                log_driver = image_info["log_driver"]
-
-            # Configs attached to image
-            if "configs" in image_info and isinstance(image_info["configs"], list):
-                for c in image_info["configs"]:
-                    if isinstance(c, dict):
-                        self.configs.append(c)
-
-            endpoint_spec = {}
-            if "endpoint_spec" in image_info:
-                endpoint_spec = image_info["endpoint_spec"]
-
-            if self.configs:
-                # Check that the supplied configs already exists
-                current_configs = yield self.docker("configs")
-                config_error_msg = (
-                    "The server has a misconfigured config, "
-                    "please contact an administrator to resolve this"
-                )
-
-                for c in self.configs:
-                    if "config_name" not in c:
-                        self.log.error(
-                            "Config: {} does not have a "
-                            "required config_name key".format(c)
-                        )
-                        raise Exception(config_error_msg)
-                    if "config_id" not in c:
-                        # Find the id from the supplied name
-                        config_ids = [
-                            cc["ID"]
-                            for cc in current_configs
-                            if cc["Spec"]["Name"] == c["config_name"]
-                        ]
-                        if not config_ids:
-                            self.log.error("A config with name {} could not be found")
-                            raise Exception(config_error_msg)
-                        c["config_id"] = config_ids[0]
-
-                container_spec.update(
-                    {"configs": [ConfigReference(**c) for c in self.configs]}
-                )
-
-            # Global container user
-            uid_gid = None
-            if "uid_gid" in container_spec:
-                uid_gid = copy.deepcopy(container_spec["uid_gid"])
-                del container_spec["uid_gid"]
-
-            # Image user
-            if "uid_gid" in image_info:
-                uid_gid = image_info["uid_gid"]
-
-            self.log.info("gid info {}".format(uid_gid))
-            if isinstance(uid_gid, str):
-                if ":" in uid_gid:
-                    uid, gid = uid_gid.split(":")
-                else:
-                    uid, gid = uid_gid, None
-
-                if (
-                    uid == "{uid}"
-                    and hasattr(self.user, "uid")
-                    and self.user.uid is not None
-                ):
-                    uid = self.user.uid
-
-                if (
-                    gid is not None
-                    and gid == "{gid}"
-                    and hasattr(self.user, "gid")
-                    and self.user.gid is not None
-                ):
-                    gid = self.user.gid
-
-                if uid:
-                    container_spec.update({"user": str(uid)})
-                if uid and gid:
-                    container_spec.update({"user": str(uid) + ":" + str(gid)})
-
-            # Global container user
-            if "user" in container_spec:
-                container_spec["user"] = str(container_spec["user"])
-
-            # Image user
-            if "user" in image_info:
-                container_spec.update({"user": str(image_info["user"])})
-
-            dynamic_holders = [Spawner, self, self.user]
-            if hasattr(self.user, "data"):
-                dynamic_holders.append(self.user.data)
-
-            # Expand container_spec before start
-            for construct in dynamic_holders:
-                try:
-                    if not hasattr(construct, "__dict__"):
-                        continue
-                    recursive_format(container_spec, construct.__dict__)
-                except TypeError:
-                    pass
-
-            # Log driver
-            log_driver_name, log_driver_options = None, None
-            if log_driver and isinstance(log_driver, dict):
-                if "name" in log_driver:
-                    log_driver_name = log_driver["name"]
-                if "options" in log_driver:
-                    log_driver_options = log_driver["options"]
-
-            # Create the service
-            container_spec = ContainerSpec(image, **container_spec)
-            resources = Resources(**resource_spec)
-            placement = Placement(**placement)
-
-            task_log_driver = None
-            if log_driver_name:
-                task_log_driver = DriverConfig(
-                    log_driver_name, options=log_driver_options
-                )
-
-            task_spec = {
-                "container_spec": container_spec,
-                "resources": resources,
-                "placement": placement,
-            }
-
-            if task_log_driver:
-                task_spec.update({"log_driver": task_log_driver})
-
-            task_tmpl = TaskTemplate(**task_spec)
-            self.log.info("task temp: {}".format(task_tmpl))
-            # Set endpoint spec
-            endpoint_spec = EndpointSpec(**endpoint_spec)
-
-            resp = yield self.docker(
-                "create_service",
-                task_tmpl,
-                name=self.service_name,
-                networks=networks,
-                endpoint_spec=endpoint_spec,
-            )
-            self.service_id = resp["ID"]
-            self.log.info(
-                "Created Docker service {} (id: {}) from image {}"
-                " for user {}".format(
-                    self.service_name, self.service_id[:7], image, self.user
-                )
-            )
-
-            yield self.wait_for_running_tasks()
-
-        else:
-            self.log.info(
-                "Found existing Docker service '{}' (id: {})".format(
-                    self.service_name, self.service_id[:7]
-                )
-            )
-            # Handle re-using API token.
-            # Get the API token from the environment variables
-            # of the running service:
-            envs = service["Spec"]["TaskTemplate"]["ContainerSpec"]["Env"]
-            for line in envs:
-                if line.startswith("JPY_API_TOKEN="):
-                    self.api_token = line.split("=", 1)[1]
-                    break
-
-        ip = self.service_name
-        port = self.service_port
-        self.log.debug(
-            "Active service: '{}' with user '{}'".format(self.service_name, self.user)
-        )
-
-        # We use service_name instead of ip
-        # https://docs.docker.com/engine/swarm/networking/#use-swarm-mode-service-discovery
-        # service_port is actually equal to 8888
-        return ip, port
-
-    @gen.coroutine
-    def stop(self, now=False):
-        """
-        Stop and remove the service
-        Consider using stop/start when Docker adds support
-        """
-        self.log.info(
-            "Stopping and removing Docker service {} (id: {})".format(
-                self.service_name, self.service_id[:7]
-            )
-        )
-
-        service = yield self.get_service()
-        if not service:
-            self.log.warn("Docker service not found")
-            return
-
-        # lookup mounts before removing the service
-        volumes = None
-        if "Mounts" in service["Spec"]["TaskTemplate"]["ContainerSpec"]:
-            volumes = service["Spec"]["TaskTemplate"]["ContainerSpec"]["Mounts"]
-        # Even though it returns the service is gone
-        # the underlying containers are still being removed
-        removed_service = yield self.docker("remove_service", service["ID"])
-        if removed_service:
-            self.log.info(
-                "Docker service {} (id: {}) removed".format(
-                    self.service_name, self.service_id[:7]
-                )
-            )
-            if volumes is not None:
-                for volume in volumes:
-                    labels = volume.get("VolumeOptions", {}).get("Labels", {})
-                    # Whether the volume should be kept
-                    if "keep" in labels and labels["keep"] != "True":
-                        self.log.info("Volume {} should not be kept".format(volume))
-                        if "Source" in volume:
-                            # Validate the volume exists
-                            try:
-                                yield self.docker("inspect_volume", volume["Source"])
-                            except docker.errors.NotFound:
-                                self.log.info("No volume named: " + volume["Source"])
-                            else:
-                                yield self.remove_volume(volume["Source"])
-                        else:
-                            self.log.error(
-                                "Volume {} didn't have a Source key so it "
-                                "can't be removed".format(volume)
-                            )
-
-    @gen.coroutine
     def wait_for_running_tasks(self, max_attempts=20):
         preparing, running = False, False
         attempt = 0
         while not running:
             service = yield self.get_service()
-            task_filter = {"service": service["Spec"]["Name"]}
-            self.tasks = yield self.docker("tasks", task_filter)
+            self.tasks = service.tasks()
             preparing = False
             for task in self.tasks:
                 task_state = task["Status"]["State"]
