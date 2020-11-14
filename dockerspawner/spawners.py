@@ -1,6 +1,5 @@
 """
-A Spawner for JupyterHub that runs each user's
-server in a separate Docker Service
+A Spawner for JupyterHub that runs each user's server in a separate Docker Service
 """
 
 import os
@@ -47,8 +46,8 @@ class SwarmSpawner(Spawner):
     c.JupyterHub.spawner_class = 'jhub.SwarmSpawner'
     # Available docker images the user can spawn
     c.SwarmSpawner.dockerimages = [
-        {'image': 'nielsbohr/base-notebook:latest',
-        'name': 'Default jupyter notebook'}
+        {'image': 'jupyterhub/singleuser:latest',
+        'name': 'Default Jupyter notebook'}
 
     ]
 
@@ -59,8 +58,8 @@ class SwarmSpawner(Spawner):
         trait=Dict(),
         default_value=[
             {
-                "image": "nielsbohr/base-notebook:latest",
-                "name": "Default jupyter notebook",
+                "image": "jupyterhub/singleuser:latest",
+                "name": "Default Jupyter notebook",
             }
         ],
         minlen=1,
@@ -84,7 +83,6 @@ class SwarmSpawner(Spawner):
         config=True,
         help="Template for html form options.",
     )
-    _executor = None
 
     disabled_form = Unicode()
 
@@ -126,9 +124,11 @@ class SwarmSpawner(Spawner):
         options = {"user_selected_image": image}
         return options
 
+    _executor = None
+
     @property
     def executor(self, max_workers=1):
-        """single global executor"""
+        """Single global executor"""
         cls = self.__class__
         if cls._executor is None:
             cls._executor = ThreadPoolExecutor(max_workers)
@@ -138,7 +138,7 @@ class SwarmSpawner(Spawner):
 
     @property
     def client(self):
-        """single global client instance"""
+        """Single global client instance"""
         cls = self.__class__
 
         if cls._client is None:
@@ -182,7 +182,7 @@ class SwarmSpawner(Spawner):
         help=dedent("""Which logging driver should be used for each service"""),
     )
 
-    resource_spec = Dict({}, config=True, help="Params about cpu and memory limits")
+    resource_spec = Dict({}, config=True, help="Params about CPU and memory limits")
 
     placement = Dict(
         {},
@@ -194,10 +194,10 @@ class SwarmSpawner(Spawner):
         [],
         config=True,
         help=dedent(
-            """Additional args to create_host_config for service create
-                        """
+            """Additional args to create_host_config for service create"""
         ),
     )
+
     configs = List(
         trait=Dict(), config=True, help=dedent("""Configs to attach to the service""")
     )
@@ -206,16 +206,17 @@ class SwarmSpawner(Spawner):
         False,
         config=True,
         help=dedent(
-            """the spawner will use the dict passed through the form
-                                or as json body when using the Hub Api
-                                """
+            """
+            The spawner will use the dict passed through the form
+            or as json body when using the Hub Api
+            """
         ),
     )
+
     jupyterhub_service_name = Unicode(
         config=True,
         help=dedent(
-            """Name of the service running the JupyterHub
-                                          """
+            """Name of the service running the JupyterHub"""
         ),
     )
 
@@ -311,17 +312,15 @@ class SwarmSpawner(Spawner):
         return env
 
     def _docker(self, method, *args, **kwargs):
-        """wrapper for calling docker methods
-
-        to be passed to ThreadPoolExecutor
+        """
+        Wrapper for calling docker methods to be passed to ThreadPoolExecutor
         """
         m = getattr(self.client, method)
         return m(*args, **kwargs)
 
     def docker(self, method, *args, **kwargs):
-        """Call a docker method in a background thread
-
-        returns a Future
+        """
+        Call a docker method in a background thread returns a Future
         """
         return self.executor.submit(self._docker, method, *args, **kwargs)
 
@@ -370,7 +369,7 @@ class SwarmSpawner(Spawner):
                         task["ID"][:7], self.service_id[:7], pformat(task_state)
                     ),
                 )
-                # there should be at most one running task
+                # There should be at most one running task
                 running_task = task
             if task_state == "rejected":
                 task_err = task["Status"]["Err"]
@@ -503,14 +502,14 @@ class SwarmSpawner(Spawner):
 
     @gen.coroutine
     def start(self):
-        """Start the single-user server in a docker service.
+        """
+        Start the single-user server in a docker service.
         You can specify the params for the service through
         jupyterhub_config.py or using the user_options
         """
         self.log.info("User: {}, start spawn".format(self.user.__dict__))
 
-        # https://github.com/jupyterhub/jupyterhub
-        # /blob/master/jupyterhub/user.py#L202
+        # https://github.com/jupyterhub/jupyterhub/blob/master/jupyterhub/user.py#L202
         # By default jupyterhub calls the spawner passing user_options
         if self.use_user_options:
             user_options = self.user_options
@@ -554,39 +553,6 @@ class SwarmSpawner(Spawner):
                 image_info = self.dockerimages[0]
 
             self.log.debug("Image info: {}".format(image_info))
-            # Does that image have restricted access
-            if "access" in image_info:
-                # Check for static or db users
-                allowed = False
-                if self.service_owner in image_info["access"]:
-                    allowed = True
-                else:
-                    if os.path.exists(image_info["access"]):
-                        db_path = image_info["access"]
-                        try:
-                            self.log.info(
-                                "Checking db: {} for "
-                                "User: {}".format(db_path, self.service_owner)
-                            )
-                            with open(db_path, "r") as db:
-                                users = [
-                                    user.rstrip("\n").rstrip("\r\n") for user in db
-                                ]
-                                if self.service_owner in users:
-                                    allowed = True
-                        except IOError as err:
-                            self.log.error(
-                                "User: {} tried to open db file {},"
-                                "Failed {}".format(self.service_owner, db_path, err)
-                            )
-                if not allowed:
-                    self.log.error(
-                        "User: {} tried to launch {} without access".format(
-                            self.service_owner, image_info["image"]
-                        )
-                    )
-                    raise Exception("You don't have permission to launch that image")
-
             self.log.debug("Container spec: {}".format(container_spec))
 
             # Setup mounts
@@ -872,14 +838,15 @@ class SwarmSpawner(Spawner):
             "Active service: '{}' with user '{}'".format(self.service_name, self.user)
         )
 
-        # we use service_name instead of ip
+        # We use service_name instead of ip
         # https://docs.docker.com/engine/swarm/networking/#use-swarm-mode-service-discovery
         # service_port is actually equal to 8888
         return ip, port
 
     @gen.coroutine
     def stop(self, now=False):
-        """Stop and remove the service
+        """
+        Stop and remove the service
         Consider using stop/start when Docker adds support
         """
         self.log.info(
