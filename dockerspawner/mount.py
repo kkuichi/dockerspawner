@@ -68,7 +68,7 @@ class VolumeMounter(Mounter):
         if missing_keys:
             self.log.error("Missing configure keys {}".format(",".join(missing_keys)))
             raise KeyError(
-                "A mount configuration error was encountered, " "due to missing keys"
+                "A mount configuration error was encountered, due to missing keys"
             )
 
         required_config_values = ["type", "target"]
@@ -78,7 +78,7 @@ class VolumeMounter(Mounter):
                 "Missing configuring values {}".format(",".join(empty_values))
             )
             raise ValueError(
-                "A mount configuration error was encountered, " "due to missing values"
+                "A mount configuration error was encountered, due to missing values"
             )
 
         # validate types

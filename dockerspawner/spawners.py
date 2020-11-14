@@ -38,7 +38,8 @@ class UnicodeOrFalse(Unicode):
         return super(UnicodeOrFalse, self).validate(obj, value)
 
 class SwarmSpawner(Spawner):
-    """A Spawner for JupyterHub using Docker Engine in Swarm mode
+    """
+    A Spawner for JupyterHub using Docker Engine in Swarm mode
     Makes a list of docker images available for the user to spawn
     Specify in the jupyterhub configuration file which are allowed:
     e.g.
@@ -78,8 +79,7 @@ class SwarmSpawner(Spawner):
     )
 
     option_template = Unicode(
-        """
-        <option value="{image}">{name}</option>""",
+        """<option value="{image}">{name}</option>""",
         config=True,
         help="Template for html form options.",
     )
@@ -194,7 +194,7 @@ class SwarmSpawner(Spawner):
         [],
         config=True,
         help=dedent(
-            """Additional args to create_host_config for service create"""
+            """Networks configuration for all images"""
         ),
     )
 
@@ -208,7 +208,7 @@ class SwarmSpawner(Spawner):
         help=dedent(
             """
             The spawner will use the dict passed through the form
-            or as json body when using the Hub Api
+            or as JSON body when using the Hub API
             """
         ),
     )
@@ -307,7 +307,6 @@ class SwarmSpawner(Spawner):
                 JPY_HUB_PREFIX=self.hub.server.base_url,
             )
         )
-
         env["JPY_HUB_API_URL"] = self._public_hub_api_url()
         return env
 
@@ -456,7 +455,7 @@ class SwarmSpawner(Spawner):
             await yield_(
                 {
                     "progress": 50,
-                    "message": "Preparing a server " "with {} the image".format(image),
+                    "message": "Preparing a server with the {} image".format(image),
                 }
             )
             await yield_(
