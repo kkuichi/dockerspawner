@@ -222,6 +222,11 @@ class SwarmSpawner(Spawner):
             mount["target"] = self.format_string(mount["target"])
             mount["source"] = self.format_string(mount["source"])
             return mount
+    
+    def _add_label(self, labels, label, value):
+        value = self.format_string(value)
+        if value:
+            labels[label] = value
 
     def get_service_config(self):
         config = {}
@@ -247,14 +252,24 @@ class SwarmSpawner(Spawner):
 
         if self.default_config:
             config.update(self.default_config)
+
+        profile = None
         if self.user_options:
-            config.update(self.user_options)
+            config.update(self.user_options.get("config", {}))
 
         mounts = config.get("mounts")
         if mounts:
             config["mounts"] = [self._format_mount(mount) for mount in mounts]
 
-        # TODO: add service labels
+        labels = {}
+        self._add_label(labels, "org.jupyterhub.user", "{username}")
+        self._add_label(labels, "org.jupyterhub.profile", "{profile}")
+
+        if labels:
+            if "labels" in config:
+                config["labels"].update(labels)
+            else:
+                config["labels"] = labels
 
         return config
 
@@ -405,25 +420,25 @@ class SwarmSpawner(Spawner):
 _SERVICE_TYPES = {
     "endpoints": EndpointSpec,
     "mode": ServiceMode,
+    "mounts": Mount,
+    "networks": NetworkAttachmentConfig,
     "resources": Resources,
     "restart_policy": RestartPolicy,
+    "secrets": SecretReference,
     "update_config": UpdateConfig,
     "roleback_config": RollbackConfig,
     "healthcheck": Healthcheck,
     "dns_config": DNSConfig,
-    "priviledges": Privileges,
-    "mounts": Mount,
-    "networks": NetworkAttachmentConfig,
-    "secrets": SecretReference,
     "configs": ConfigReference,
+    "privileges": Privileges
 }
 
 _MOUNT_TYPES = {
     "driver_config": DriverConfig
 }
 
-def _parse_obj(obj, types):
-    for option, option_type in types.items():
+def _parse_obj(obj, options):
+    for option, option_type in options.items():
         value = obj.get(option)
         if isinstance(value, dict):
             obj[option] = option_type(**value)
