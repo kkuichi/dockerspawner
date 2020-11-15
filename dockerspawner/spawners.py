@@ -224,9 +224,10 @@ class SwarmSpawner(Spawner):
             return mount
     
     def _add_label(self, labels, label, value):
-        value = self.format_string(value)
         if value:
-            labels[label] = value
+            value = self.format_string(value)
+            if value:
+                labels[label] = value
 
     def get_service_config(self):
         config = {}
@@ -255,6 +256,7 @@ class SwarmSpawner(Spawner):
 
         profile = None
         if self.user_options:
+            profile = self.user_options.get("name")
             config.update(self.user_options.get("config", {}))
 
         mounts = config.get("mounts")
@@ -262,8 +264,8 @@ class SwarmSpawner(Spawner):
             config["mounts"] = [self._format_mount(mount) for mount in mounts]
 
         labels = {}
-        self._add_label(labels, "org.jupyterhub.user", "{username}")
-        self._add_label(labels, "org.jupyterhub.profile", "{profile}")
+        self._add_label(labels, "org.jupyterhub.user", self.user.name)
+        self._add_label(labels, "org.jupyterhub.profile", profile)
 
         if labels:
             if "labels" in config:
