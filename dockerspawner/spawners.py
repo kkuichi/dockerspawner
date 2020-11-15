@@ -2,9 +2,7 @@
 A Spawner for JupyterHub that runs each user's server in a separate Docker Service
 """
 
-import os
 import docker
-import copy
 from asyncio import sleep
 from async_generator import async_generator, yield_
 from textwrap import dedent
@@ -25,12 +23,13 @@ from docker.types import (
     Mount,
     NetworkAttachmentConfig,
     SecretReference,
-    ConfigReference
+    ConfigReference,
+    DriverConfig
 )
 from docker.utils import kwargs_from_env
 from tornado import gen
 from jupyterhub.spawner import Spawner
-from traitlets import default, Dict, Unicode, List, Bool, Int
+from traitlets import default, Dict, List, Unicode
 
 class SwarmSpawner(Spawner):
     """
@@ -219,9 +218,18 @@ class SwarmSpawner(Spawner):
                 raise
         return service
 
-    def _get_config(self):
+    def _format_mount(self, mount):
+        if isinstance(mount, str):
+            return self.format_string(mount)
+        else:
+            mount["target"] = self.format_string(mount["target"])
+            mount["source"] = self.format_string(mount["source"])
+            return mount
+
+    def get_service_config(self):
         config = {}
 
+        config["name"] = self.service_name
         config["command"] = list(self.cmd)
         config["args"] = self.get_args()
         config["env"] = ["{}={}".format(k, v) for k, v in self.get_env().items()]
@@ -245,6 +253,12 @@ class SwarmSpawner(Spawner):
         if self.user_options:
             config.update(self.user_options)
 
+        mounts = config.get("mounts")
+        if mounts:
+            config["mount"] = list(map(mounts, _format_mount))
+
+        # TODO: add service labels
+
         return config
 
     @gen.coroutine
@@ -257,7 +271,7 @@ class SwarmSpawner(Spawner):
         service = yield self.get_service()
 
         if service is None:
-            config = self._get_config()
+            config = self.get_service_config()
             config = _parse_config(config)
             service = yield self.docker("services.create", **config)
             self.service_id = service.id
@@ -415,6 +429,15 @@ def _parse_config(self, config):
         obj = config.get(option)
         if obj:
             config[option] = option_type(**obj)
+
+    mounts = config.get("mounts")
+    if mounts:
+        for mount in mounts:
+            if isinstance(mount, str):
+                continue
+            driver_config = mount.get("driver_config")
+            if driver_config:
+                mount["driver_config"] = DriverConfig(**driver_config)
 
     for option, option_type in _OBJ_LIST_TYPES:
         l = config.get(option)
