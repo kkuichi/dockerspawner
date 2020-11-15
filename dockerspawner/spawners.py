@@ -3,7 +3,6 @@ A Spawner for JupyterHub that runs each user's server in a separate Docker Servi
 """
 
 import os
-import hashlib
 import docker
 import copy
 from asyncio import sleep
@@ -26,16 +25,6 @@ from docker.utils import kwargs_from_env
 from tornado import gen
 from jupyterhub.spawner import Spawner
 from traitlets import default, Dict, Unicode, List, Bool, Int
-from dockerspawner.mount import VolumeMounter
-from dockerspawner.util import recursive_format
-
-class UnicodeOrFalse(Unicode):
-    info_text = "a unicode string or False"
-
-    def validate(self, obj, value):
-        if not value:
-            return value
-        return super(UnicodeOrFalse, self).validate(obj, value)
 
 class SwarmSpawner(Spawner):
     """
@@ -43,65 +32,31 @@ class SwarmSpawner(Spawner):
     Makes a list of docker images available for the user to spawn
     Specify in the jupyterhub configuration file which are allowed:
     e.g.
-
-    c.JupyterHub.spawner_class = 'jhub.SwarmSpawner'
-    # Available docker images the user can spawn
-    c.SwarmSpawner.dockerimages = [
-        {'image': 'jupyterhub/singleuser:latest',
-        'name': 'Default Jupyter notebook'}
-
-    ]
-
-    The images must be locally available before the user can spawn them
     """
 
-    dockerimages = List(
+    default_config = Dict(
+        default_value= 
+        {
+            "image": "jupyterhub/singleuser:latest"
+        },
+        config=True,
+        help="Default service configuration"
+    )
+
+    profiles = List(
         trait=Dict(),
-        default_value=[
-            {
-                "image": "jupyterhub/singleuser:latest",
-                "name": "Default Jupyter notebook",
-            }
-        ],
-        minlen=1,
+        default_value=[],
         config=True,
-        help="Docker images that are available to the user of the host",
+        help = "Docker configuration profiles available for the user"
     )
 
-    form_template = Unicode(
-        """
-        <label for="dockerimage">Select a notebook image:</label>
-        <select class="form-control" name="dockerimage" required autofocus>
-            {option_template}
-        </select>""",
-        config=True,
-        help="Form template.",
-    )
-
-    option_template = Unicode(
-        """<option value="{image}" {selected}>{name}</option>""",
-        config=True,
-        help="Template for html form options.",
-    )
-
-    @default("options_form")
-    def _options_form(self):
-        # TODO: return option html form
-        return ""
-
-    def options_from_form(self, form_data):
-        """Parse the submitted form data and turn it into the correct
-        structures for self.user_options."""
-        # TODO: select options from specs, this will be stored in self.user_options
-        return options
-
-    service_name_prefix = Unicode(
+    name_prefix = Unicode(
         "jupyter",
         config=True,
         help=dedent(
             """
             Prefix for service names. The full service name for a particular
-            user will be <prefix>-<hash(username)>-<server_name>.
+            user will be <name_prefix>-<user_name>[-<server_name>].
             """
         ),
     )
@@ -116,45 +71,50 @@ class SwarmSpawner(Spawner):
         ),
     )
 
+    form_template = Unicode(
+        """
+        <label for="profile">Select environment:</label>
+        <select class="form-control" name="profile" required autofocus>
+            {option_template}
+        </select>
+        """,
+        config=True,
+        help="Form template.",
+    )
+
+    option_template = Unicode(
+        """<option value="{name}" {selected}>{title}</option>""",
+        config=True,
+        help="Template for html form options.",
+    )
+
+    @default("options_form")
+    def _options_form(self):
+        if not self.profiles:
+            return ""
+        options = "".join([self.option_template.format(
+            name=prof["name"],
+            title=prof.get("title", prof["name"]),
+            selected=("selected" if i == 0 else ""))]) for i, prof in enumerate(self.profiles)
+            ]
+        return form_template.format(option_template=options)
+
+    def options_from_form(self, form_data):
+        selected = form_data.get("profile")
+        if selected:
+            for prof in self.profiles:
+                if prof["name"] == selected:
+                    return prof
+        return {}
+
     service_id = Unicode()
 
-    service_port = Int(8888, min=1, max=65535, config=True)
+    service_name = Unicode()
 
-    _service_owner = None
-
-    @property
-    def service_owner(self):
-        if self._service_owner is None:
-            m = hashlib.md5()
-            m.update(self.user.name.encode("utf-8"))
-            if hasattr(self.user, "real_name"):
-                self._service_owner = self.user.real_name[-32:]
-            elif hasattr(self.user, "name"):
-                # Maximum 63 characters, 10 are comes from the underlying format
-                # i.e. prefix=jupyter-, postfix=-1
-                # get up to last 32 characters as service identifier
-                self._service_owner = self.user.name[-32:]
-            else:
-                self._service_owner = m.hexdigest()
-        return self._service_owner
-
-    @property
-    def service_name(self):
-        """
-        Service name inside the Docker Swarm
-        """
-        if self.name:
-            return "{}-{}-{}".format(self.service_name_prefix, self.service_owner, server_name)
-        else:
-            return "{}-{}".format(self.service_name_prefix, self.service_owner)
-
-    @property
-    def tasks(self):
-        return self._tasks
-
-    @tasks.setter
-    def tasks(self, tasks):
-        self._tasks = tasks
+    @default("service_name")
+    def _service_name(self):
+        return self.format_string("{prefix}-{username}-{server}") if getattr(self, "name", "") else
+               self.format_atring("{prefix}-{username}")
 
     _executor = None
 
@@ -179,8 +139,8 @@ class SwarmSpawner(Spawner):
                 kwargs["tls"] = TLSConfig(**self.docker_client_tls_config)
             kwargs.update(kwargs_from_env())
             client = docker.APIClient(version="auto", **kwargs)
-
             cls._client = client
+
         return cls._client
 
     def load_state(self, state):
@@ -196,17 +156,6 @@ class SwarmSpawner(Spawner):
     def clear_state(self):
         super().clear_state()
         self.service_id = ""
-
-    def _public_hub_api_url(self):
-        proto, path = self.hub.api_url.split("://", 1)
-        _, rest = path.split(":", 1)
-        return "{proto}://{name}:{rest}".format(
-            proto=proto, name=self.jupyterhub_service_name, rest=rest
-        )
-
-    def get_env(self):
-        env = super().get_env()
-        return env
 
     def _docker(self, method, *args, **kwargs):
         """
@@ -226,15 +175,13 @@ class SwarmSpawner(Spawner):
     @gen.coroutine
     def get_service(self):
         self.log.debug(
-            "Getting Docker service '{}' with id: '{}'".format(
-                self.service_name, self.service_id
-            )
+            "Getting Docker service {}".format(self.service_name)
         )
         try:
             service = yield self.docker("services.get", self.service_name)
             self.service_id = service.id
         except NotFound:
-                self.log.info("Docker service '{}' is gone".format(self.service_name))
+                self.log.info("Docker service {} is gone".format(self.service_name))
                 service = None
                 # Docker service is gone, remove service id
                 self.service_id = ""
@@ -255,26 +202,27 @@ class SwarmSpawner(Spawner):
         You can specify the params for the service through
         jupyterhub_config.py or using the user_options
         """
-        self.log.info("User: {}, start spawn".format(self.user.__dict__))
-
-        # https://github.com/jupyterhub/jupyterhub/blob/master/jupyterhub/user.py#L202
-        # By default jupyterhub calls the spawner passing user_options
-        if self.use_user_options:
-            user_options = self.user_options
-        else:
-            user_options = {}
-
         service = yield self.get_service()
+
         if service is None:
+            config = {}
+
             # TODO: prepare configuration
 
-            # TODO: create service
-            service = None
+            # set command to self.cmd
+            # copy self.args() to args
+            # copy self.get_env() to env
+
+            # add profile to labels
+
+            # merge default_config
+            # merge user_options
+
+            service = yield self.docker("services.create", **config)
             self.service_id = service.id
             self.log.info(
-                "Created Docker service {} (id: {}) from image {}"
-                " for user {}".format(
-                    self.service_name, self.service_id[:7], image, self.user
+                "Created Docker service {} with id {} from image {} for user {}".format(
+                    self.service_name, self.service_id[:7], config["image"], self.user.name
                 )
             )
 
@@ -282,7 +230,7 @@ class SwarmSpawner(Spawner):
 
         else:
             self.log.info(
-                "Found existing Docker service {} (id: {})".format(
+                "Found existing Docker service {} with id {}".format(
                     self.service_name, self.service_id[:7]
                 )
             )
@@ -295,15 +243,12 @@ class SwarmSpawner(Spawner):
                     self.api_token = line.split("=", 1)[1]
                     break
 
-        ip = self.service_name
-        port = self.service_port
-        self.log.debug(
-            "Active service: '{}' with user '{}'".format(self.service_name, self.user)
-        )
-
         # We use service_name instead of ip
         # https://docs.docker.com/engine/swarm/networking/#use-swarm-mode-service-discovery
-        # service_port is actually equal to 8888
+        # port should be default to 8888
+        ip = self.service_name
+        port = self.port
+
         return ip, port
 
     @gen.coroutine
@@ -313,7 +258,7 @@ class SwarmSpawner(Spawner):
         Consider using stop/start when Docker adds support
         """
         self.log.info(
-            "Stopping and removing Docker service {} (id: {})".format(
+            "Stopping and removing Docker service {} with id {}".format(
                 self.service_name, self.service_id[:7]
             )
         )
@@ -328,12 +273,12 @@ class SwarmSpawner(Spawner):
             # Even though it returns the service is gone
             # the underlying containers are still being removed
             self.log.info(
-                "Docker service {} (id: {}) removed".format(
+                "Docker service {} with id {} was removed".format(
                     self.service_name, self.service_id[:7]
                 )
             )
         except APIError:
-            self.log.error("Error removing service {} (id: {})".format(
+            self.log.error("Error removing service {} with id {}".format(
                 self.server_name, self.service_id
             ))
 
@@ -386,8 +331,7 @@ class SwarmSpawner(Spawner):
                 await yield_(
                     {
                         "progress": 70,
-                        "message": "Downloading new update "
-                        "for {}".format(full_image),
+                        "message": "Downloading new update for {}".format(full_image),
                     }
                 )
                 initial_output = True
@@ -442,7 +386,7 @@ class SwarmSpawner(Spawner):
             await yield_(
                 {
                     "progress": 50,
-                    "message": "Preparing a server with the {} image".format(image),
+                    "message": "Preparing a server with the image {}".format(image),
                 }
             )
             await yield_(
@@ -468,7 +412,7 @@ class SwarmSpawner(Spawner):
             for task in self.tasks:
                 task_state = task["Status"]["State"]
                 self.log.info(
-                    "Waiting for service: {} current task status: {}".format(
+                    "Waiting for service {}, current task status: {}".format(
                         service["ID"], task_state
                     )
                 )
@@ -481,3 +425,13 @@ class SwarmSpawner(Spawner):
             if not preparing:
                 attempt += 1
             yield gen.sleep(1)
+
+    def templete_namespace():
+        profile = getattr(self, "user_options", {})
+        return {
+            "prefix": self.name_prefix,
+            "username": self.user.name,
+            "servername": getattr(self, "name", ""),
+            "profile": profile.get("name", "")
+        }
+
