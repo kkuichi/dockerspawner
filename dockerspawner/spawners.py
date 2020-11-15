@@ -13,13 +13,19 @@ from pprint import pformat
 from docker.errors import APIError, NotFound
 from docker.tls import TLSConfig
 from docker.types import (
-    TaskTemplate,
-    Resources,
-    ContainerSpec,
-    DriverConfig,
-    Placement,
-    ConfigReference,
     EndpointSpec,
+    ServiceMode,
+    Resources,
+    RestartPolicy,
+    UpdateConfig,
+    RollbackConfig,
+    Healthcheck,
+    DNSConfig,
+    Privileges,
+    Mount,
+    NetworkAttachmentConfig,
+    SecretReference,
+    ConfigReference
 )
 from docker.utils import kwargs_from_env
 from tornado import gen
@@ -40,14 +46,28 @@ class SwarmSpawner(Spawner):
             "image": "jupyterhub/singleuser:latest"
         },
         config=True,
-        help="Default service configuration"
+        help=dedent(
+            """
+            Default service configuration.
+
+            Check for more info:
+            https://docker-py.readthedocs.io/en/stable/services.html
+            """
+        ),
     )
 
     profiles = List(
         trait=Dict(),
         default_value=[],
         config=True,
-        help = "Docker configuration profiles available for the user"
+        help=dedent(
+            """
+            List of Docker configuration profiles available for the user.
+
+            Profile is the dict with name of the profile, title displayed in
+            the html form and config: Docker service configuration.
+            """
+        ),
     )
 
     name_prefix = Unicode(
@@ -55,8 +75,10 @@ class SwarmSpawner(Spawner):
         config=True,
         help=dedent(
             """
-            Prefix for service names. The full service name for a particular
-            user will be <name_prefix>-<user_name>[-<server_name>].
+            Prefix for service names.
+            
+            The full service name for a particular user will be
+            <name_prefix>-<user_name>[-<server_name>].
             """
         ),
     )
@@ -64,16 +86,18 @@ class SwarmSpawner(Spawner):
     docker_client_tls_config = Dict(
         config=True,
         help=dedent(
-            """Arguments to pass to docker TLS configuration.
+            """
+            Arguments to pass to docker TLS configuration.
+            
             Check for more info:
-            http://docker-py.readthedocs.io/en/stable/tls.html
+            http://docker-py.readthedocs.io/en/stable/tls.html.
             """
         ),
     )
 
     form_template = Unicode(
         """
-        <label for="profile">Select environment:</label>
+        <label for="profile">Select configuration:</label>
         <select class="form-control" name="profile" required autofocus>
             {option_template}
         </select>
@@ -95,8 +119,8 @@ class SwarmSpawner(Spawner):
         options = "".join([self.option_template.format(
             name=prof["name"],
             title=prof.get("title", prof["name"]),
-            selected=("selected" if i == 0 else ""))]) for i, prof in enumerate(self.profiles)
-            ]
+            selected=("selected" if i == 0 else "")) for i, prof in enumerate(self.profiles)
+            ])
         return form_template.format(option_template=options)
 
     def options_from_form(self, form_data):
@@ -113,8 +137,8 @@ class SwarmSpawner(Spawner):
 
     @default("service_name")
     def _service_name(self):
-        return self.format_string("{prefix}-{username}-{server}") if getattr(self, "name", "") else
-               self.format_atring("{prefix}-{username}")
+        return (self.format_string("{prefix}-{username}-{server}") if getattr(self, "name", "") else
+                self.format_string("{prefix}-{username}"))
 
     _executor = None
 
@@ -162,7 +186,7 @@ class SwarmSpawner(Spawner):
         Wrapper for calling docker methods to be passed to ThreadPoolExecutor
         """
         m = self.client
-        for attr in method.split('.')
+        for attr in method.split('.'):
             m = getattr(m, attr)
         return m(*args, **kwargs)
 
@@ -195,6 +219,34 @@ class SwarmSpawner(Spawner):
                 raise
         return service
 
+    def _get_config(self):
+        config = {}
+
+        config["command"] = list(self.cmd)
+        config["args"] = self.get_args()
+        config["env"] = ["{}={}".format(k, v) for k, v in self.get_env().items()]
+
+        resources = {}
+        if self.cpu_limit:
+            resources["cpu_limit"] = self.cpu_limit * 10e9
+        if self.mem_limit:
+            mem = self.mem_limit
+            resources["mem_limit"] = mem.lower() if isinstance(mem, str) else mem
+        if self.cpu_guarantee:
+            resources["cpu_reservation"] = self.cpu_guarantee * 10e9
+        if self.mem_guarantee:
+            mem = self.mem_guarantee
+            resources["mem_reservation"] = mem.lower() if isinstance(mem, str) else mem
+        if resources:
+            config["resources"] = resources
+
+        if self.default_config:
+            config.update(self.default_config)
+        if self.user_options:
+            config.update(self.user_options)
+
+        return config
+
     @gen.coroutine
     def start(self):
         """
@@ -205,19 +257,8 @@ class SwarmSpawner(Spawner):
         service = yield self.get_service()
 
         if service is None:
-            config = {}
-
-            # TODO: prepare configuration
-
-            # set command to self.cmd
-            # copy self.args() to args
-            # copy self.get_env() to env
-
-            # add profile to labels
-
-            # merge default_config
-            # merge user_options
-
+            config = self._get_config()
+            config = _parse_config(config)
             service = yield self.docker("services.create", **config)
             self.service_id = service.id
             self.log.info(
@@ -225,9 +266,7 @@ class SwarmSpawner(Spawner):
                     self.service_name, self.service_id[:7], config["image"], self.user.name
                 )
             )
-
             yield self.wait_for_running_tasks()
-
         else:
             self.log.info(
                 "Found existing Docker service {} with id {}".format(
@@ -245,7 +284,7 @@ class SwarmSpawner(Spawner):
 
         # We use service_name instead of ip
         # https://docs.docker.com/engine/swarm/networking/#use-swarm-mode-service-discovery
-        # port should be default to 8888
+        # port should be default (8888)
         ip = self.service_name
         port = self.port
 
@@ -263,22 +302,20 @@ class SwarmSpawner(Spawner):
             )
         )
 
-        service = yield self.get_service()
-        if not service:
-            self.log.warn("Docker service not found")
-            return
-
         try:
-            service.remove()
+            result = yield self.docker("remove_service", self.service_name)
             # Even though it returns the service is gone
             # the underlying containers are still being removed
-            self.log.info(
-                "Docker service {} with id {} was removed".format(
-                    self.service_name, self.service_id[:7]
+            if result:
+                self.log.info(
+                    "Docker service {} with id {} was removed".format(
+                        self.service_name, self.service_id[:7]
+                    )
                 )
-            )
+        except NotFound:
+            self.log.warn("Docker service {} not found", self.server_name)
         except APIError:
-            self.log.error("Error removing service {} with id {}".format(
+            self.log.error("Error removing Docker service {} with id {}".format(
                 self.server_name, self.service_id
             ))
 
@@ -287,13 +324,13 @@ class SwarmSpawner(Spawner):
     @gen.coroutine
     def poll(self):
         """Check for a task state like `docker service ps id`"""
-        service = yield self.get_service()
-        if service is None:
-            self.log.warn("Docker service not found")
-            return 0
+
+        tasks = yield docker("tasks", {"service": self.service_name})
+        if not tasks:
+            self.log.warn("Tasks for service {} not found", self.service_name)
 
         running_task = None
-        for task in service.tasks():
+        for task in tasks:
             task_state = task["Status"]["State"]
             if task_state == "running":
                 self.log.debug(
@@ -321,99 +358,18 @@ class SwarmSpawner(Spawner):
         else:
             return 0
 
-    async def check_update(self, image, tag="latest"):
-        full_image = "".join([image, ":", tag])
-        download_tracking = {}
-        initial_output = False
-        total_download = 0
-        for download in self.client.pull(image, tag=tag, stream=True, decode=True):
-            if not initial_output:
-                await yield_(
-                    {
-                        "progress": 70,
-                        "message": "Downloading new update for {}".format(full_image),
-                    }
-                )
-                initial_output = True
-            if "id" and "progress" in download:
-                _id = download["id"]
-                if _id not in download_tracking:
-                    del download["id"]
-                    download_tracking[_id] = download
-                else:
-                    download_tracking[_id].update(download)
-
-                # Output every 20 MB
-                for _id, tracker in download_tracking.items():
-                    if (
-                        tracker["progressDetail"]["current"]
-                        == tracker["progressDetail"]["total"]
-                    ):
-                        total_download += tracker["progressDetail"]["total"] * pow(
-                            10, -6
-                        )
-                        await yield_(
-                            {
-                                "progress": 80,
-                                "message": "Downloaded {} MB of {}".format(
-                                    total_download, full_image
-                                ),
-                            }
-                        )
-                        # return to web processing
-                        await sleep(1)
-
-                # Remove completed
-                download_tracking = {
-                    _id: tracker
-                    for _id, tracker in download_tracking.items()
-                    if tracker["progressDetail"]["current"]
-                    != tracker["progressDetail"]["total"]
-                }
-
-    @async_generator
-    async def progress(self):
-        top_task = self.tasks[0]
-        image = top_task["Spec"]["ContainerSpec"]["Image"]
-        self.log.info("Spawning progress of {} with image".format(self.service_id))
-        task_status = top_task["Status"]["State"]
-        _tag = None
-        if ":" in image:
-            _image, _tag = image.split(":")
-        else:
-            _image = image
-        if task_status == "preparing":
-            await yield_(
-                {
-                    "progress": 50,
-                    "message": "Preparing a server with the image {}".format(image),
-                }
-            )
-            await yield_(
-                {
-                    "progress": 60,
-                    "message": "Checking for new version of {}".format(image),
-                }
-            )
-            if _tag is not None:
-                await self.check_update(_image, _tag)
-            else:
-                await self.check_update(_image)
-            self.log.info("Finished progress from spawning {}".format(image))
-
     @gen.coroutine
     def wait_for_running_tasks(self, max_attempts=20):
         preparing, running = False, False
         attempt = 0
         while not running:
-            service = yield self.get_service()
-            self.tasks = service.tasks()
+            tasks = yield self.docker("tasks", {"service": self.service_name})
             preparing = False
-            for task in self.tasks:
+            for task in tasks:
                 task_state = task["Status"]["State"]
                 self.log.info(
                     "Waiting for service {}, current task status: {}".format(
-                        service["ID"], task_state
+                        self.service_name, task_state
                     )
                 )
                 if task_state == "running":
@@ -426,7 +382,7 @@ class SwarmSpawner(Spawner):
                 attempt += 1
             yield gen.sleep(1)
 
-    def templete_namespace():
+    def templete_namespace(self):
         profile = getattr(self, "user_options", {})
         return {
             "prefix": self.name_prefix,
@@ -435,3 +391,34 @@ class SwarmSpawner(Spawner):
             "profile": profile.get("name", "")
         }
 
+_OBJ_TYPES = {
+    "endpoints": EndpointSpec,
+    "mode": ServiceMode,
+    "resources": Resources,
+    "restart_policy": RestartPolicy,
+    "update_config": UpdateConfig,
+    "roleback_config": RollbackConfig,
+    "healthcheck": Healthcheck,
+    "dns_config": DNSConfig,
+    "priviledges": Privileges
+}
+
+_OBJ_LIST_TYPES = {
+    "mounts": Mount,
+    "networks": NetworkAttachmentConfig,
+    "secrets": SecretReference,
+    "configs": ConfigReference
+}
+
+def _parse_config(self, config):
+    for option, option_type in _OBJ_TYPES.items():
+        obj = config.get(option)
+        if obj:
+            config[option] = option_type(**obj)
+
+    for option, option_type in _OBJ_LIST_TYPES:
+        l = config.get(option)
+        if l:
+            config[option] = [obj if isinstance(obj, str) else option_type(**obj) for obj in l]
+
+    return config
