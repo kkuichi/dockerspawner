@@ -34,9 +34,6 @@ from traitlets import default, Dict, List, Unicode
 class SwarmSpawner(Spawner):
     """
     A Spawner for JupyterHub using Docker Engine in Swarm mode
-    Makes a list of docker images available for the user to spawn
-    Specify in the jupyterhub configuration file which are allowed:
-    e.g.
     """
 
     default_config = Dict(
@@ -255,7 +252,7 @@ class SwarmSpawner(Spawner):
 
         mounts = config.get("mounts")
         if mounts:
-            config["mount"] = list(map(mounts, _format_mount))
+            config["mounts"] = [self._format_mount(mount) for mount in mounts]
 
         # TODO: add service labels
 
@@ -405,7 +402,7 @@ class SwarmSpawner(Spawner):
             "profile": profile.get("name", "")
         }
 
-_OBJ_TYPES = {
+_SERVICE_TYPES = {
     "endpoints": EndpointSpec,
     "mode": ServiceMode,
     "resources": Resources,
@@ -414,34 +411,29 @@ _OBJ_TYPES = {
     "roleback_config": RollbackConfig,
     "healthcheck": Healthcheck,
     "dns_config": DNSConfig,
-    "priviledges": Privileges
-}
-
-_OBJ_LIST_TYPES = {
+    "priviledges": Privileges,
     "mounts": Mount,
     "networks": NetworkAttachmentConfig,
     "secrets": SecretReference,
-    "configs": ConfigReference
+    "configs": ConfigReference,
 }
 
-def _parse_config(self, config):
-    for option, option_type in _OBJ_TYPES.items():
-        obj = config.get(option)
-        if obj:
-            config[option] = option_type(**obj)
+_MOUNT_TYPES = {
+    "driver_config": DriverConfig
+}
 
+def _parse_obj(obj, types):
+    for option, option_type in types.items():
+        value = obj.get(option)
+        if isinstance(value, dict):
+            obj[option] = option_type(**value)
+        elif isinstance(value, (list, tuple)):
+            obj[option] = [option_type(**elm) if isinstance(elm, dict) else elm for elm in value]
+    return obj
+
+def _parse_config(self, config):
     mounts = config.get("mounts")
     if mounts:
-        for mount in mounts:
-            if isinstance(mount, str):
-                continue
-            driver_config = mount.get("driver_config")
-            if driver_config:
-                mount["driver_config"] = DriverConfig(**driver_config)
-
-    for option, option_type in _OBJ_LIST_TYPES:
-        l = config.get(option)
-        if l:
-            config[option] = [obj if isinstance(obj, str) else option_type(**obj) for obj in l]
-
+        config["mounts"] = [_parse_obj(mount, _MOUNT_TYPES) for mount in mounts]
+    config = _parse_obj(config, _SERVICE_TYPES)
     return config
