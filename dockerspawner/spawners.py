@@ -2,12 +2,11 @@
 A Spawner for JupyterHub that runs each user's server in a separate Docker Service
 """
 
-import docker
 from asyncio import sleep
-from async_generator import async_generator, yield_
 from textwrap import dedent
 from concurrent.futures import ThreadPoolExecutor
 from pprint import pformat
+import docker
 from docker.errors import APIError, NotFound
 from docker.tls import TLSConfig
 from docker.types import (
@@ -30,6 +29,7 @@ from docker.utils import kwargs_from_env
 from tornado import gen
 from jupyterhub.spawner import Spawner
 from traitlets import default, Dict, List, Unicode
+from flatten_dict import flatten, unflatten
 
 class SwarmSpawner(Spawner):
     """
@@ -133,7 +133,8 @@ class SwarmSpawner(Spawner):
 
     @default("service_name")
     def _service_name(self):
-        return (self.format_string("{prefix}-{username}-{server}") if getattr(self, "name", "") else
+        return (self.format_string("{prefix}-{username}-{server}")
+                if self.name else
                 self.format_string("{prefix}-{username}"))
 
     _executor = None
@@ -206,7 +207,7 @@ class SwarmSpawner(Spawner):
                 # Docker service is gone, remove service id
                 self.service_id = ""
         except APIError as err:
-            if err.response.status_code == 500:
+            if err.is_server_error():
                 self.log.info("Docker Swarm Server error")
                 service = None
                 # Docker service is unhealthy, remove the service_id
@@ -218,22 +219,16 @@ class SwarmSpawner(Spawner):
     def _format_mount(self, mount):
         if isinstance(mount, str):
             return self.format_string(mount)
-        else:
+        elif isinstance(mount, dict):
             mount["target"] = self.format_string(mount["target"])
             mount["source"] = self.format_string(mount["source"])
             return mount
     
-    def _add_label(self, labels, label, value):
-        if value:
-            value = self.format_string(value)
-            if value:
-                labels[label] = value
-
     def get_service_config(self):
         config = {}
 
         config["name"] = self.service_name
-        config["command"] = list(self.cmd)
+        config["command"] = self.cmd
         config["args"] = self.get_args()
         config["env"] = ["{}={}".format(k, v) for k, v in self.get_env().items()]
 
@@ -252,26 +247,27 @@ class SwarmSpawner(Spawner):
             config["resources"] = resources
 
         if self.default_config:
-            config.update(self.default_config)
+            config = _update_config(config, default_config)
 
-        profile = None
+        profile_name = ""
         if self.user_options:
-            profile = self.user_options.get("name")
-            config.update(self.user_options.get("config", {}))
+            profile_name = self.user_options.get("name", "")
+            profile_config = self.user_options.get("config", {})
+            config = _update_config(config, profile_config)
 
+        labels = {
+            "org.jupyterhub.user": self.user.name,
+            "org.jupyterhub.server": self.name,
+            "org.jupyterhub.profile": profile_name
+        }
+        if "labels" in config:
+            config["labels"].update(labels)
+        else:
+            config["labels"] = labels
+    
         mounts = config.get("mounts")
         if mounts:
             config["mounts"] = [self._format_mount(mount) for mount in mounts]
-
-        labels = {}
-        self._add_label(labels, "org.jupyterhub.user", self.user.name)
-        self._add_label(labels, "org.jupyterhub.profile", profile)
-
-        if labels:
-            if "labels" in config:
-                config["labels"].update(labels)
-            else:
-                config["labels"] = labels
 
         return config
 
@@ -280,7 +276,7 @@ class SwarmSpawner(Spawner):
         """
         Start the single-user server in a docker service.
         You can specify the params for the service through
-        jupyterhub_config.py or using the user_options
+        jupyterhub_config.py or using the user_options.
         """
         service = yield self.get_service()
 
@@ -415,9 +411,23 @@ class SwarmSpawner(Spawner):
         return {
             "prefix": self.name_prefix,
             "username": self.user.name,
-            "servername": getattr(self, "name", ""),
+            "servername": self.name,
             "profile": profile.get("name", "")
         }
+
+def _update_config(config, update):
+    config = flatten(config)
+    update = flatten(update)
+
+    for opt, val1 in update.items():
+        if isinstance(val1, list) and opt in config:
+            val2 = config[opt]
+            assert isinstance(val2, list)
+            config[opt] = val1 + val2
+        else:
+            config[opt] = val1
+
+    return unflatten(config)
 
 _SERVICE_TYPES = {
     "endpoints": EndpointSpec,
@@ -439,13 +449,14 @@ _MOUNT_TYPES = {
     "driver_config": DriverConfig
 }
 
-def _parse_obj(obj, options):
-    for option, option_type in options.items():
-        value = obj.get(option)
-        if isinstance(value, dict):
-            obj[option] = option_type(**value)
-        elif isinstance(value, (list, tuple)):
-            obj[option] = [option_type(**elm) if isinstance(elm, dict) else elm for elm in value]
+def _parse_obj(obj, types):
+    for opt, val in obj.items():
+        opt_type = types.get(opt)
+        if opt_type:
+            if isinstance(val, dict):
+                obj[opt] = opt_type(**val)
+            elif isinstance(val, list):
+                obj[opt] = [opt_type(**elm) if isinstance(elm, dict) else elm for elm in val]
     return obj
 
 def _parse_config(self, config):
