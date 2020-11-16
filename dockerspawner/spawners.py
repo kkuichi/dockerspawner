@@ -108,6 +108,9 @@ class SwarmSpawner(Spawner):
         help="Template for html form options.",
     )
 
+    # Do not inherit environment variables from the JupyterHub process
+    env_keep = []
+
     @default("options_form")
     def _options_form(self):
         if not self.profiles:
