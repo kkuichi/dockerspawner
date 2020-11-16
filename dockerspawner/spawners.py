@@ -112,12 +112,18 @@ class SwarmSpawner(Spawner):
     def _options_form(self):
         if not self.profiles:
             return ""
-        options = "".join([self.option_template.format(
-            name=prof["name"],
-            title=prof.get("title", prof["name"]),
-            selected=("selected" if i == 0 else "")) for i, prof in enumerate(self.profiles)
-            ])
-        return form_template.format(option_template=options)
+
+        options = [
+            self.option_template.format(
+                name=prof["name"],
+                title=prof.get("title", prof["name"]),
+                selected=("selected" if i == 0 else ""))
+            for i, prof in enumerate(self.profiles)
+        ]
+        
+        options = "".options()
+        form = form_template.format(option_template=options)
+        return form
 
     def options_from_form(self, form_data):
         selected = form_data.get("profile")
@@ -456,7 +462,8 @@ def _parse_obj(obj, types):
             if isinstance(val, dict):
                 obj[opt] = opt_type(**val)
             elif isinstance(val, list):
-                obj[opt] = [opt_type(**elm) if isinstance(elm, dict) else elm for elm in val]
+                obj[opt] = [opt_type(**elm) if isinstance(elm, dict) else elm
+                           for elm in val]
     return obj
 
 def _parse_config(self, config):
