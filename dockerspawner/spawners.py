@@ -253,7 +253,7 @@ class SwarmSpawner(Spawner):
             config["resources"] = resources
 
         if self.default_config:
-            config = _update_config(config, default_config)
+            config = _update_config(config, self.default_config)
 
         profile_name = ""
         if self.user_options:
@@ -412,7 +412,7 @@ class SwarmSpawner(Spawner):
                 attempt += 1
             yield gen.sleep(1)
 
-    def templete_namespace(self):
+    def template_namespace(self):
         profile = getattr(self, "user_options", {})
         return {
             "prefix": self.name_prefix,
