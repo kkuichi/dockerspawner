@@ -229,7 +229,7 @@ class SwarmSpawner(Spawner):
             mount["target"] = self.format_string(mount["target"])
             mount["source"] = self.format_string(mount["source"])
             return mount
-    
+
     def get_service_config(self):
         config = {}
 
@@ -421,20 +421,6 @@ class SwarmSpawner(Spawner):
             "profile": profile.get("name", "")
         }
 
-def _update_config(config, update):
-    config = flatten(config)
-    update = flatten(update)
-
-    for opt, val1 in update.items():
-        if isinstance(val1, list) and opt in config:
-            val2 = config[opt]
-            assert isinstance(val2, list)
-            config[opt] = val1 + val2
-        else:
-            config[opt] = val1
-
-    return unflatten(config)
-
 _SERVICE_TYPES = {
     "endpoints": EndpointSpec,
     "mode": ServiceMode,
@@ -472,3 +458,17 @@ def _parse_config(self, config):
         config["mounts"] = [_parse_obj(mount, _MOUNT_TYPES) for mount in mounts]
     config = _parse_obj(config, _SERVICE_TYPES)
     return config
+
+def _update_config(config, update):
+    config = flatten(config)
+    update = flatten(update)
+
+    for opt, val2 in update.items():
+        if isinstance(val2, list) and opt in config:
+            val1 = config[opt]
+            assert isinstance(val1, list)
+            config[opt] = val1 + val2 # Append update for lists
+        else:
+            config[opt] = val2
+
+    return unflatten(config)

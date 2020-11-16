@@ -1,2 +1,2 @@
-black
-flake8
+pytest>=3.6
+pytest-asyncio

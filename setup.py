@@ -1,4 +1,5 @@
 import os
+from textwrap import dedent
 from setuptools import setup, find_packages
 
 cur_dir = os.path.abspath(os.path.dirname(__file__))
@@ -18,10 +19,14 @@ with open(os.path.join(cur_dir, "version.py")) as f:
 
 long_description = open("README.rst").read()
 setup(
-    name = "dockerspawner2",
+    name = "dockerspawner",
     version = version_ns["__version__"],
-    description = """SwarmSpawner enables JupyterHub to spawn jupyter
-                  notebooks across a Docker Swarm cluster""",
+    description = dedent(
+        """
+        SwarmSpawner enables JupyterHub to spawn jupyter notebooks across a
+        Docker Swarm cluster
+        """
+    ),
     long_description = long_description,
     author = "Peter Bednár",
     author_email = "peter.bednar@tuke.sk",
@@ -30,10 +35,6 @@ setup(
     license = "BSD",
     keywords = ["Interactive", "Interpreter", "Shell", "Web"],
     install_requires = read_req("requirements.txt"),
-    extras_require = {
-        "dev": read_req("requirements-dev.txt"),
-        "test": read_req(os.path.join("tests", "requirements.txt")),
-    },
     classifiers = [
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",

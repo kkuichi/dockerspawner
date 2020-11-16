@@ -3,4 +3,3 @@ jupyterhub==1.2.1
 flatten-dict
 traitlets
 tornado
-async_generator
