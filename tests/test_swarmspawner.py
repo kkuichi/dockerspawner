@@ -6,15 +6,24 @@ from dockerspawner import SwarmSpawner
 
 @pytest.mark.asyncio
 async def test_start_stop(swarmspawner_app):
-    app = swarmspawner_app
-
     username = "somebody"
+    server_name = "test-server"
+
+    app = swarmspawner_app
     add_user(app.db, app, name=username)
     user = app.users[username]
 
-    assert isinstance(user.spawner, SwarmSpawner)
+    spawner = user.spawners[server_name]
+    assert isinstance(spawner, SwarmSpawner)
+
     token = user.new_api_token()
+    # Start the server
+    r = await api_request(app, "users", username, "servers", server_name, method="post")
+    pending = r.status_code == 202
+    while pending:
+        # Request again
+        r = await api_request(app, "users", username)
+        user_info = r.json()
+        pending = user_info["servers"][server_name]["pending"]
 
-    print(user.spawner.get_service_config())
-
-    # TODO: start server
+    assert r.status_code in {201, 200}, r.text

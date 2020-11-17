@@ -32,5 +32,5 @@ def docker():
         yield
     finally:
         for service in client.services.list():
-            if service.name.startsWith("jupyterhub-test"):
+            if service.name.startswith("jupyterhub-test"):
                 service.remove()

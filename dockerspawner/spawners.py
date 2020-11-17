@@ -6,7 +6,7 @@ from asyncio import sleep
 from textwrap import dedent
 from concurrent.futures import ThreadPoolExecutor
 from pprint import pformat
-import docker
+from docker import DockerClient
 from docker.errors import APIError, NotFound
 from docker.tls import TLSConfig
 from docker.types import (
@@ -143,7 +143,7 @@ class SwarmSpawner(Spawner):
 
     @default("service_name")
     def _service_name(self):
-        return (self.format_string("{prefix}-{username}-{server}")
+        return (self.format_string("{prefix}-{username}-{servername}")
                 if self.name else
                 self.format_string("{prefix}-{username}"))
 
@@ -169,8 +169,7 @@ class SwarmSpawner(Spawner):
             if self.docker_client_tls_config:
                 kwargs["tls"] = TLSConfig(**self.docker_client_tls_config)
             kwargs.update(kwargs_from_env())
-            client = docker.APIClient(version="auto", **kwargs)
-            cls._client = client
+            cls._client = DockerClient(version="auto", **kwargs)
 
         return cls._client
 
@@ -193,7 +192,7 @@ class SwarmSpawner(Spawner):
         Wrapper for calling docker methods to be passed to ThreadPoolExecutor
         """
         m = self.client
-        for attr in method.split('.'):
+        for attr in method.split("."):
             m = getattr(m, attr)
         return m(*args, **kwargs)
 
@@ -350,7 +349,7 @@ class SwarmSpawner(Spawner):
         )
 
         try:
-            result = yield self.docker("remove_service", self.service_name)
+            result = yield self.docker("api.remove_service", self.service_name)
             # Even though it returns the service is gone
             # the underlying containers are still being removed
             if result:
@@ -372,7 +371,7 @@ class SwarmSpawner(Spawner):
     def poll(self):
         """Check for a task state like `docker service ps id`"""
 
-        tasks = yield docker("tasks", {"service": self.service_name})
+        tasks = yield self.docker("api.tasks", {"service": self.service_name})
         if not tasks:
             self.log.warn("Tasks for service {} not found", self.service_name)
 
@@ -410,7 +409,7 @@ class SwarmSpawner(Spawner):
         preparing, running = False, False
         attempt = 0
         while not running:
-            tasks = yield self.docker("tasks", {"service": self.service_name})
+            tasks = yield self.docker("api.tasks", {"service": self.service_name})
             preparing = False
             for task in tasks:
                 task_state = task["Status"]["State"]
@@ -430,12 +429,12 @@ class SwarmSpawner(Spawner):
             yield gen.sleep(1)
 
     def template_namespace(self):
-        profile = getattr(self, "user_options", {})
+        profile = self.user_options.get("user_profile", "")
         return {
             "prefix": self.name_prefix,
             "username": self.user.name,
             "servername": self.name,
-            "profile": profile.get("name", "")
+            "profile": profile
         }
 
 _SERVICE_TYPES = {
@@ -469,7 +468,7 @@ def _parse_obj(obj, types):
                            for elm in val]
     return obj
 
-def _parse_config(self, config):
+def _parse_config(config):
     mounts = config.get("mounts")
     if mounts:
         config["mounts"] = [_parse_obj(mount, _MOUNT_TYPES) for mount in mounts]
