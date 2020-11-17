@@ -13,6 +13,10 @@ MockHub.hub_ip = "0.0.0.0"
 def swarmspawner_app(app):
 
     app.config.SwarmSpawner.name_prefix = "jupyterhub-test"
+    app.config.SwarmSpawner.default_config = {
+        "image": "jupyterhub/singleuser:latest",
+        "networks": ["bridge"]
+    }
 
     with patch.dict(app.tornado_settings, {
             "allow_named_servers": True,

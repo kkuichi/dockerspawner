@@ -260,11 +260,14 @@ class SwarmSpawner(Spawner):
             config = _update_config(config, self.default_config)
 
         user_profile = self.user_options.get("user_profile", "")
-        if self.user_profile:
+        if user_profile:
             for prof in self.profiles:
                 if user_profile == prof.get("name"):
                     profile_config = prof.get("config", {})
                     config = _update_config(config, profile_config)
+
+        image = config["image"]
+        config["env"].append("JUPYTER_IMAGE_SPEC={}".format(image))
 
         labels = {
             "org.jupyterhub.user": self.user.name,
@@ -275,6 +278,10 @@ class SwarmSpawner(Spawner):
             config["labels"].update(labels)
         else:
             config["labels"] = labels
+        if "container_labels" in config:
+            config["container_labels"].update(labels)
+        else:
+            config["container_labels"] = labels
     
         mounts = config.get("mounts")
         if mounts:
@@ -390,7 +397,7 @@ class SwarmSpawner(Spawner):
                         pformat(task_err),
                     )
                 )
-                # If the tasks is rejected -> remove it
+                # If the task is rejected -> remove service
                 yield self.stop()
 
         if running_task is not None:
