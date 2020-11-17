@@ -60,8 +60,9 @@ class SwarmSpawner(Spawner):
             """
             List of Docker configuration profiles available for the user.
 
-            Profile is the dict with name of the profile, title displayed in
-            the html form and config: Docker service configuration.
+            Profile is the dict with the `name` of the profile, `title`
+            displayed in the html form and `config` dict: Docker service
+            configuration.
             """
         ),
     )
@@ -129,11 +130,11 @@ class SwarmSpawner(Spawner):
         return form
 
     def options_from_form(self, form_data):
-        selected = form_data.get("profile")
-        if selected:
+        if "profile" in form_data:
+            selected = form_data["profile"][0]
             for prof in self.profiles:
                 if prof["name"] == selected:
-                    return prof
+                    return { "user_profile": selected }
         return {}
 
     service_id = Unicode()
@@ -211,7 +212,7 @@ class SwarmSpawner(Spawner):
             service = yield self.docker("services.get", self.service_name)
             self.service_id = service.id
         except NotFound:
-                self.log.info("Docker service {} is gone".format(self.service_name))
+                self.log.info("Docker service {} not found".format(self.service_name))
                 service = None
                 # Docker service is gone, remove service id
                 self.service_id = ""
@@ -258,16 +259,17 @@ class SwarmSpawner(Spawner):
         if self.default_config:
             config = _update_config(config, self.default_config)
 
-        profile_name = ""
-        if self.user_options:
-            profile_name = self.user_options.get("name", "")
-            profile_config = self.user_options.get("config", {})
-            config = _update_config(config, profile_config)
+        user_profile = self.user_options.get("user_profile", "")
+        if self.user_profile:
+            for prof in self.profiles:
+                if user_profile == prof.get("name"):
+                    profile_config = prof.get("config", {})
+                    config = _update_config(config, profile_config)
 
         labels = {
             "org.jupyterhub.user": self.user.name,
             "org.jupyterhub.server": self.name,
-            "org.jupyterhub.profile": profile_name
+            "org.jupyterhub.profile": user_profile
         }
         if "labels" in config:
             config["labels"].update(labels)
@@ -290,6 +292,11 @@ class SwarmSpawner(Spawner):
         service = yield self.get_service()
 
         if service is None:
+            self.log.info(
+                "Creating Docker service for user {}".format(
+                    self.user.name
+                )
+            )
             config = self.get_service_config()
             config = _parse_config(config)
             service = yield self.docker("services.create", **config)

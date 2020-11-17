@@ -33,11 +33,17 @@ setup(
     packages = find_packages(exclude=["contrib", "docs", "tests"]),
     url = "https://github.com/peterbednar/dockerspawner",
     license = "BSD",
+    platforms = "Linux, Mac OS X",
     keywords = ["Interactive", "Interpreter", "Shell", "Web"],
     install_requires = read_req("requirements.txt"),
+    entry_points = {
+        'jupyterhub.spawners': ['docker-swarm = dockerspawner:SwarmSpawner']
+    },
     classifiers = [
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
+        "Intended Audience :: System Administrators",
+        "Intended Audience :: Science/Research",
         "Topic :: Software Development :: Libraries :: Python Modules",
         "License :: OSI Approved :: BSD License",
         "Programming Language :: Python :: 3.5",
