@@ -45,23 +45,10 @@ coverage.xml
 *.mo
 *.pot
 
-# Django stuff:
-*.log
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-userlist
-ssl.cert
-ssl.key
 env
 jupyterhub.sqlite
-src
+jupyterhub_cookie_secrets
 
-.idea/
 .pytest_cache/
 
 venv/
