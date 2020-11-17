@@ -109,8 +109,14 @@ class SwarmSpawner(Spawner):
         help="Template for html form options.",
     )
 
-    # Do not inherit environment variables from the JupyterHub process
-    env_keep = []
+    @default("port")
+    def _port_default(self):
+        return 8888
+
+    # By default, do not inherit environment variables from the JupyterHub process
+    @default("env_keep")
+    def _env_keep(self):
+        return []
 
     @default("options_form")
     def _options_form(self):
