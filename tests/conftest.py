@@ -28,9 +28,6 @@ def swarmspawner_app(app):
             }):
         yield app
 
-def _is_swarm(info):
-    return info["Swarm"]["LocalNodeState"] == "active"
-
 @pytest.fixture(autouse=True, scope="session")
 def docker():
     client = DockerClient("unix:///var/run/docker.sock")
