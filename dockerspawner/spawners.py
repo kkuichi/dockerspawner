@@ -130,9 +130,8 @@ class SwarmSpawner(Spawner):
                 selected=("selected" if i == 0 else ""))
             for i, prof in enumerate(self.profiles)
         ]
-        
-        options = "".options()
-        form = form_template.format(option_template=options)
+
+        form = self.form_template.format(option_template=options)
         return form
 
     def options_from_form(self, form_data):
@@ -231,6 +230,14 @@ class SwarmSpawner(Spawner):
                 raise
         return service
 
+    def _format_param(self, config, param):
+        val = config.get(param)
+        if val:
+            if isinstance(val, str):
+                config[param] = self.format_string(param)
+            elif isinstance(val, list):
+                config[param] = [self.format_string(elm) for elm in val]
+
     def _format_mount(self, mount):
         if isinstance(mount, str):
             return self.format_string(mount)
@@ -238,6 +245,39 @@ class SwarmSpawner(Spawner):
             mount["target"] = self.format_string(mount["target"])
             mount["source"] = self.format_string(mount["source"])
             return mount
+
+    def _format_config(self, config):
+        self._format_param(config, "command")
+        self._format_param(config, "args")
+        self._format_param(config, "env")
+        self._format_param(config, "user")
+        self._format_param(config, "workdir")
+
+        mounts = config.get("mounts")
+        if mounts:
+            config["mounts"] = [self._format_mount(mount) for mount in mounts]
+
+        configs = config.get("configs")
+        if configs:
+            for conf in configs:
+                self._format_param(conf, "filename")
+
+        secrets = config.get("secrets")
+        if secrets:
+            for secr in secrets:
+                self._format_param(secr, "filename")
+
+        labels = config.get("labels")
+        if labels:
+            for lab, val in labels.items():
+                labels[lab] = self.format_string(val)
+
+        container_labels = config.get("container_labels")
+        if container_labels:
+            for lab, val in container_labels.items():
+                container_labels[lab] = self.format_string(val)
+
+        return config
 
     def get_service_config(self):
         config = {}
@@ -282,15 +322,19 @@ class SwarmSpawner(Spawner):
         if "labels" in config:
             config["labels"].update(labels)
         else:
-            config["labels"] = labels
+            config["labels"] = dict(labels)
         if "container_labels" in config:
             config["container_labels"].update(labels)
         else:
-            config["container_labels"] = labels
-    
-        mounts = config.get("mounts")
-        if mounts:
-            config["mounts"] = [self._format_mount(mount) for mount in mounts]
+            config["container_labels"] = dict(labels)
+
+        config = self._format_config(config)
+
+        self.log.debug(
+            "Config for service {} with id {}: {}".format(
+                self.service_name, self.service_id[:7], pformat(config)
+            )
+        )
 
         return config
 
@@ -365,10 +409,10 @@ class SwarmSpawner(Spawner):
                     )
                 )
         except NotFound:
-            self.log.warn("Docker service {} not found", self.server_name)
+            self.log.warn("Docker service {} not found", self.service_name)
         except APIError:
             self.log.error("Error removing Docker service {} with id {}".format(
-                self.server_name, self.service_id
+                self.service_name, self.service_id
             ))
 
         self.clear_state()
@@ -388,7 +432,7 @@ class SwarmSpawner(Spawner):
                 self.log.debug(
                     "Task {} of service with id {} status: {}".format(
                         task["ID"][:7], self.service_id[:7], pformat(task_state)
-                    ),
+                    )
                 )
                 # There should be at most one running task
                 running_task = task
@@ -435,13 +479,14 @@ class SwarmSpawner(Spawner):
             yield gen.sleep(1)
 
     def template_namespace(self):
+        ns = super().template_namespace()
+        ns["prefix"] = self.name_prefix
+        if self.name:
+            ns["servername"] = self.name
         profile = self.user_options.get("user_profile", "")
-        return {
-            "prefix": self.name_prefix,
-            "username": self.user.name,
-            "servername": self.name,
-            "profile": profile
-        }
+        if profile:
+            ns["profile"] = profile
+        return ns
 
 _SERVICE_TYPES = {
     "endpoints": EndpointSpec,
