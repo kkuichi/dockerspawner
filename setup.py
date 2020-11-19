@@ -17,17 +17,18 @@ version_ns = {}
 with open(os.path.join(cur_dir, "version.py")) as f:
     exec(f.read(), {}, version_ns)
 
-long_description = open("README.rst").read()
+long_description = open("README.md").read()
 setup(
     name = "dockerspawner",
     version = version_ns["__version__"],
     description = dedent(
         """
         SwarmSpawner enables JupyterHub to spawn jupyter notebooks across a
-        Docker Swarm cluster
+        Docker Swarm cluster.
         """
     ),
     long_description = long_description,
+    long_description_content_type='text/markdown'
     author = "Peter Bednár",
     author_email = "peter.bednar@tuke.sk",
     packages = find_packages(exclude=["contrib", "docs", "tests"]),
