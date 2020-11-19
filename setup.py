@@ -28,7 +28,7 @@ setup(
         """
     ),
     long_description = long_description,
-    long_description_content_type='text/markdown'
+    long_description_content_type="text/markdown",
     author = "Peter Bednár",
     author_email = "peter.bednar@tuke.sk",
     packages = find_packages(exclude=["contrib", "docs", "tests"]),

@@ -1,4 +1,4 @@
-# SwarmSpawner
+## SwarmSpawner
 
 **SwarmSpawner** enables JupyterHub to spawn jupyter notebooks across a Docker Swarm cluster.
 
