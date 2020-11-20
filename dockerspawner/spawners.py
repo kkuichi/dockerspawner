@@ -27,6 +27,7 @@ from docker.types import (
 )
 from docker.utils import kwargs_from_env
 from tornado import gen
+from tornado.web import HTTPError
 from jupyterhub.spawner import Spawner
 from traitlets import default, Dict, List, Unicode
 from flatten_dict import flatten, unflatten
@@ -131,7 +132,7 @@ class SwarmSpawner(Spawner):
             for i, prof in enumerate(self.profiles)
         ]
 
-        form = self.form_template.format(option_template=options)
+        form = self.form_template.format(option_template="".join(options))
         return form
 
     def options_from_form(self, form_data):
@@ -140,7 +141,12 @@ class SwarmSpawner(Spawner):
             for prof in self.profiles:
                 if prof["name"] == selected:
                     return { "user_profile": selected }
-        return {}
+            raise HTTPError(
+                400,
+                "Docker profile with name {} not found".format(selected)
+            )
+        else:
+            return {}
 
     service_id = Unicode()
 
