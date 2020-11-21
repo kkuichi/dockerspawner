@@ -233,7 +233,7 @@ class SwarmSpawner(Spawner):
                 # Docker service is unhealthy, remove the service_id
                 self.service_id = ""
             else:
-                raise
+                raise err
         return service
 
     def _format_param(self, config, param):
@@ -364,13 +364,13 @@ class SwarmSpawner(Spawner):
             try:
                 service = yield self.docker("services.create", **config)
                 self.service_id = service.id
-            except: APIError:
+            except APIError as err:
                 self.log.error(
                     "Error creating Docker service {} with config: {}".format(
                         self.service_name, pprint(config)
                     )
                 )
-                raise
+                raise err
             self.log.info(
                 "Created Docker service {} with id {} from image {} for user {}".format(
                     self.service_name, self.service_id[:7], config["image"], self.user.name
