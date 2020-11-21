@@ -367,7 +367,7 @@ class SwarmSpawner(Spawner):
             except APIError as err:
                 self.log.error(
                     "Error creating Docker service {} with config: {}".format(
-                        self.service_name, pprint(config)
+                        self.service_name, pformat(config)
                     )
                 )
                 raise err
