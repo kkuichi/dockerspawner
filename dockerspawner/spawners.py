@@ -528,6 +528,9 @@ _MOUNT_TYPES = {
 }
 
 def _parse_obj(obj, types):
+    if not isinstance(obj, dict):
+        return obj
+
     for opt, val in obj.items():
         opt_type = types.get(opt)
         if opt_type:
