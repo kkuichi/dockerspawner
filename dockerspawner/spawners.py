@@ -361,8 +361,16 @@ class SwarmSpawner(Spawner):
             )
             config = self.get_service_config()
             config = _parse_config(config)
-            service = yield self.docker("services.create", **config)
-            self.service_id = service.id
+            try:
+                service = yield self.docker("services.create", **config)
+                self.service_id = service.id
+            except: APIError:
+                self.log.error(
+                    "Error creating Docker service {} with config: {}".format(
+                        self.service_name, pprint(config)
+                    )
+                )
+                raise
             self.log.info(
                 "Created Docker service {} with id {} from image {} for user {}".format(
                     self.service_name, self.service_id[:7], config["image"], self.user.name
@@ -427,9 +435,14 @@ class SwarmSpawner(Spawner):
     def poll(self):
         """Check for a task state like `docker service ps id`"""
 
-        tasks = yield self.docker("api.tasks", {"service": self.service_name})
+        try:
+            tasks = yield self.docker("api.tasks", {"service": self.service_name})
+        except NotFound:
+            self.log.warn("Docker service {} not found"), self.service_name)
+            return 0
         if not tasks:
             self.log.warn("Tasks for service {} not found", self.service_name)
+            return 0
 
         running_task = None
         for task in tasks:
