@@ -438,10 +438,10 @@ class SwarmSpawner(Spawner):
         try:
             tasks = yield self.docker("api.tasks", {"service": self.service_name})
         except NotFound:
-            self.log.warn("Docker service {} not found", self.service_name)
+            self.log.warn("Docker service {} not found".format(self.service_name))
             return 0
         if not tasks:
-            self.log.warn("Tasks for service {} not found", self.service_name)
+            self.log.warn("Tasks for service {} not found".format(self.service_name))
             return 0
 
         running_task = None
