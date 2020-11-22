@@ -3,6 +3,7 @@ A Spawner for JupyterHub that runs each user's server in a separate Docker Servi
 """
 
 import math
+import string
 from asyncio import sleep
 from textwrap import dedent
 from concurrent.futures import ThreadPoolExecutor
@@ -155,9 +156,9 @@ class SwarmSpawner(Spawner):
 
     @default("service_name")
     def _service_name(self):
-        return (self.format_string("{prefix}-{username}-{servername}")
+        return (self.format_string("{prefix}-{_username}-{_servername}")
                 if self.name else
-                self.format_string("{prefix}-{username}"))
+                self.format_string("{prefix}-{_username}"))
 
     _executor = None
 
@@ -439,10 +440,14 @@ class SwarmSpawner(Spawner):
         try:
             tasks = yield self.docker("api.tasks", {"service": self.service_name})
         except NotFound:
-            self.log.warn("Docker service {} not found".format(self.service_name))
+            self.log.warn(
+                "Docker service {} not found".format(self.service_name)
+            )
             return 0
         if not tasks:
-            self.log.warn("Tasks for service {} not found".format(self.service_name))
+            self.log.warn(
+                "Tasks for service {} not found".format(self.service_name)
+            )
             return 0
 
         running_task = None
@@ -500,13 +505,26 @@ class SwarmSpawner(Spawner):
 
     def template_namespace(self):
         ns = super().template_namespace()
+        ns["_username"] = _escape(ns["username"])
         ns["prefix"] = self.name_prefix
         if self.name:
             ns["servername"] = self.name
+            ns["_servername"] = _escape(self.name)
         profile = self.user_options.get("user_profile", "")
         if profile:
             ns["profile"] = profile
         return ns
+
+_DOCKER_NAME_CHARS = set(string.ascii_letters + string.digits + "-.")
+
+def _escape(s):
+    chars = []
+    for c in s:
+        if c in _DOCKER_NAME_CHARS:
+            chars.append(c)
+        else:
+            chars.append("_0x{:x}".format(ord(c)))
+    return "".join(chars)
 
 _SERVICE_TYPES = {
     "endpoints": EndpointSpec,

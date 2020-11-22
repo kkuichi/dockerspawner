@@ -6,8 +6,8 @@ from dockerspawner import SwarmSpawner
 
 @pytest.mark.asyncio
 async def test_start_stop(swarmspawner_app):
-    username = "somebody"
-    server_name = "test-server"
+    username = "has@"
+    server_name = "also-has@"
 
     app = swarmspawner_app
     add_user(app.db, app, name=username)
