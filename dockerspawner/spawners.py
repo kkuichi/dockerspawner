@@ -339,8 +339,8 @@ class SwarmSpawner(Spawner):
         config = self._format_config(config)
 
         self.log.debug(
-            "Config for service {} with id {}: {}".format(
-                self.service_name, self.service_id[:7], pformat(config)
+            "Config for service {}: {}".format(
+                self.service_name, pformat(config)
             )
         )
 
