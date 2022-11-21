@@ -40,7 +40,7 @@ class SwarmSpawner(Spawner):
     """
 
     default_config = Dict(
-        default_value= 
+        default_value=
         {
             "image": "jupyterhub/singleuser:latest"
         },
@@ -76,7 +76,7 @@ class SwarmSpawner(Spawner):
         help=dedent(
             """
             Prefix for service names.
-            
+
             The full service name for a particular user will be
             <name_prefix>-<user_name>[-<server_name>].
             """
@@ -88,7 +88,7 @@ class SwarmSpawner(Spawner):
         help=dedent(
             """
             Arguments to pass to docker TLS configuration.
-            
+
             Check for more info:
             http://docker-py.readthedocs.io/en/stable/tls.html.
             """
@@ -297,12 +297,12 @@ class SwarmSpawner(Spawner):
 
         resources = {}
         if self.cpu_limit:
-            resources["cpu_limit"] = math.ceil(self.cpu_limit * 10e9)
+            resources["cpu_limit"] = math.ceil(self.cpu_limit * 1e9)
         if self.mem_limit:
             mem = self.mem_limit
             resources["mem_limit"] = mem.lower() if isinstance(mem, str) else mem
         if self.cpu_guarantee:
-            resources["cpu_reservation"] = math.ceil(self.cpu_guarantee * 10e9)
+            resources["cpu_reservation"] = math.ceil(self.cpu_guarantee * 1e9)
         if self.mem_guarantee:
             mem = self.mem_guarantee
             resources["mem_reservation"] = mem.lower() if isinstance(mem, str) else mem
